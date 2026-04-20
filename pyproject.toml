@@ -69,6 +69,11 @@ Changelog = "https://github.com/LeoChi/confluence-exporter/blob/main/CHANGELOG.m
 confluence-exporter = "confluence_exporter.cli:app"
 cfx = "confluence_exporter.cli:app"
 
+[project.gui-scripts]
+# 'gui-scripts' means Windows launches these without a console window.
+confluence-exporter-gui = "confluence_exporter.gui:main"
+cfx-gui = "confluence_exporter.gui:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/confluence_exporter"]
 

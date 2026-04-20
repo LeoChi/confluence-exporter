@@ -51,34 +51,81 @@ Requires Python **3.10+**.
 
 ---
 
-## Quick start
+## Three ways to use it
+
+The same codebase ships with three entry surfaces — the business logic lives in the library; CLI and GUI are thin adapters on top.
+
+| Mode               | When to use it                                                  | Launch                                             |
+| ------------------ | --------------------------------------------------------------- | -------------------------------------------------- |
+| 🖱️ **Desktop app** | Prefer a window with forms, file pickers and a live log pane    | `confluence-exporter-gui` *(alias: `cfx-gui`)*     |
+| 💻 **CLI / TUI**   | SSH sessions, scripts, CI pipelines, or a rich terminal UI      | `confluence-exporter` *(alias: `cfx`)*             |
+| 📦 **Library**     | Embed the export inside your own Python code / data pipeline    | `from confluence_exporter import SpaceExporter, …` |
+
+### Desktop app
+
+```bash
+confluence-exporter-gui
+```
+
+A Tkinter window with tabs for **Connection → Export → Convert → Merge → Diagnose**, a progress bar, and a live log pane. All long tasks run on a background thread so the UI stays responsive. No extra dependencies — Tkinter ships with Python. (On some Linux distros you may need `sudo apt install python3-tk`.)
+
+### CLI
 
 ```bash
 # Interactive menu (recommended first run)
 confluence-exporter
 
-# Or the short alias
+# Short alias
 cfx
 ```
 
-The tool walks you through auth setup, target space, format, and saves your choices to `config.json`. Subsequent runs re-use it.
+The tool walks you through auth setup, target space, and format, and saves your choices to `config.json`. Subsequent runs re-use it.
 
-### Non-interactive / scripted usage
+Non-interactive / scripted:
 
 ```bash
-# Run subcommands directly
 cfx export   --space MYKEY --format pdf --output ./out -y
 cfx convert  ./out --engine playwright --merge -y
 cfx merge    ./out_converted ./out_volumes --mode per_section -y
 
-# Inspect what's installed & check credentials
-cfx diagnose
-
-# Edit or (re)create the config file
-cfx init-config
+cfx diagnose        # check installed engines + credentials
+cfx init-config     # edit / (re)create config.json
 ```
 
 Run `cfx <command> --help` for all options.
+
+### Library
+
+```python
+from pathlib import Path
+from confluence_exporter import (
+    AppConfig, ConfluenceClient, SpaceExporter, OutputConverter, PDFMerger,
+)
+
+cfg = AppConfig()
+cfg.confluence.base_url  = "https://your-tenant.atlassian.net"
+cfg.confluence.space_key = "ABC"
+cfg.confluence.auth_mode = "api_token"
+cfg.confluence.email     = "you@example.com"
+cfg.confluence.api_token = "…"
+
+client = ConfluenceClient.from_config(cfg.confluence)
+SpaceExporter(cfg, client).run()
+
+OutputConverter(
+    output_root=Path(cfg.export.output_path),
+    target_format="pdf",
+    engine="auto",
+).run()
+
+PDFMerger(
+    source_root=Path(cfg.export.output_path + "_converted"),
+    dest_root=Path("./volumes"),
+    mode="per_section",
+).run()
+```
+
+A full worked example — including progress callbacks and all three auth modes — is in [`examples/use_as_library.py`](examples/use_as_library.py).
 
 ---
 
@@ -182,34 +229,19 @@ Keys starting with `_` are treated as inline documentation and ignored at load t
 
 ---
 
-## Using as a library
+## Standalone executable (no Python required for end users)
 
-```python
-from pathlib import Path
-from confluence_exporter import (
-    load_config, ConfluenceClient, SpaceExporter, OutputConverter, PDFMerger
-)
+If you want to ship a double-clickable `.exe` / `.app` for users who don't have Python installed, bundle it with PyInstaller:
 
-cfg = load_config("config.json")
-client = ConfluenceClient.from_config(cfg.confluence)
-
-# Download
-SpaceExporter(cfg, client).run()
-
-# Convert to PDF
-OutputConverter(
-    output_root=Path(cfg.export.output_path),
-    target_format="pdf",
-    engine="playwright",
-).run()
-
-# Merge into volumes
-PDFMerger(
-    source_root=Path(cfg.export.output_path + "_converted"),
-    dest_root=Path("./volumes"),
-    mode="per_section",
-).run()
+```bash
+pip install "confluence-exporter[all]" pyinstaller
+# Windows / macOS / Linux (run on the target OS):
+pyinstaller --name ConfluenceExporter --windowed --onefile ^
+  --collect-all confluence_exporter ^
+  -m confluence_exporter.gui
 ```
+
+The resulting `dist/ConfluenceExporter.exe` (or `.app` on macOS) embeds Python and all dependencies. For the Playwright engine specifically, Chromium binaries are large and best installed separately after first launch — in a bundled build, prefer `weasyprint` or `xhtml2pdf` out of the box.
 
 ---
 
