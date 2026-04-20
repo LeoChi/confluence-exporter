@@ -5,8 +5,8 @@
 
 **Export an entire Confluence space to PDF, DOCX, Markdown or HTML — with attachments embedded, optional consolidated volumes, and an interactive terminal UI.**
 
-[![PyPI](https://img.shields.io/pypi/v/confluence-exporter.svg)](https://pypi.org/project/confluence-exporter/)
-[![Python](https://img.shields.io/pypi/pyversions/confluence-exporter.svg)](https://pypi.org/project/confluence-exporter/)
+[![PyPI](https://img.shields.io/pypi/v/confluence-space-exporter.svg)](https://pypi.org/project/confluence-space-exporter/)
+[![Python](https://img.shields.io/pypi/pyversions/confluence-space-exporter.svg)](https://pypi.org/project/confluence-space-exporter/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
@@ -30,20 +30,20 @@ Built for teams that need to **archive, migrate, or feed their wiki into an LLM*
 ## Installation
 
 ```bash
-pip install confluence-exporter
+pip install confluence-space-exporter
 ```
 
 For best-quality PDFs (recommended), also install Playwright:
 
 ```bash
-pip install "confluence-exporter[playwright]"
+pip install "confluence-space-exporter[playwright]"
 playwright install chromium
 ```
 
 All engines in one shot:
 
 ```bash
-pip install "confluence-exporter[all]"
+pip install "confluence-space-exporter[all]"
 playwright install chromium
 ```
 
@@ -234,7 +234,7 @@ Keys starting with `_` are treated as inline documentation and ignored at load t
 If you want to ship a double-clickable `.exe` / `.app` for users who don't have Python installed, bundle it with PyInstaller:
 
 ```bash
-pip install "confluence-exporter[all]" pyinstaller
+pip install "confluence-space-exporter[all]" pyinstaller
 # Windows / macOS / Linux (run on the target OS):
 pyinstaller --name ConfluenceExporter --windowed --onefile ^
   --collect-all confluence_exporter ^
