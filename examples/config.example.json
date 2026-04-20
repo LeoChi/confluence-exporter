@@ -1,0 +1,44 @@
+{
+  "confluence": {
+    "base_url": "https://YOUR-TENANT.atlassian.net",
+    "space_key": "MYSPACE",
+    "auth_mode": "api_token",
+    "_comment_auth_mode": "One of: api_token | pat | browser_cookie",
+    "email": "you@example.com",
+    "api_token": "PASTE_YOUR_API_TOKEN_HERE",
+    "personal_access_token": "",
+    "cookies": {
+      "_comment": "If auth_mode=browser_cookie, paste the entire 'Cookie:' header from DevTools here, or list individual name=value pairs. Any Atlassian session cookie name works (cloud.session.token, tenant.session.token, etc.)."
+    }
+  },
+  "export": {
+    "format": "pdf",
+    "_format_choices": "pdf | docx | md | html",
+    "output_path": "./output",
+    "include_attachments": true,
+    "include_gliffy": true,
+    "page_path": "{space_name}/{ancestor_titles}/{page_title}",
+    "attachment_path": "{space_name}/attachments/{page_title}/{attachment_filename}",
+    "filename_max_length": 200,
+    "filename_lowercase": false,
+    "include_document_title": true,
+    "page_breadcrumbs": true,
+    "skip_unchanged": true,
+    "cleanup_stale": false,
+    "lockfile_name": "confluence-lock.json",
+    "batch_size": 25,
+    "request_delay_seconds": 0.25,
+    "log_level": "INFO"
+  },
+  "convert": {
+    "engine": "auto",
+    "_engine_choices": "auto | playwright | weasyprint | xhtml2pdf",
+    "append_attachment_list": true,
+    "merge_pdf_attachments": true
+  },
+  "merge": {
+    "mode": "per_section",
+    "_mode_choices": "per_section | per_space | single",
+    "destination": "./output_volumes"
+  }
+}

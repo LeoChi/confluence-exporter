@@ -1,0 +1,55 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+*.egg
+build/
+dist/
+wheels/
+pip-wheel-metadata/
+.tox/
+.nox/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Virtual envs ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- IDE ---
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# --- OS ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Project output / secrets ---
+# NEVER commit user secrets or downloaded data
+config.json
+config.local.json
+*.local.json
+output/
+output_*/
+*_converted/
+*_volumes/
+confluence-lock.json
+*.pdf
+*.docx
+
+# Allow examples and docs PDFs if needed:
+!examples/**/*.pdf
+!docs/**/*.pdf

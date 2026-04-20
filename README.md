@@ -1,0 +1,238 @@
+<!-- markdownlint-disable MD033 MD041 -->
+<div align="center">
+
+# Confluence Exporter
+
+**Export an entire Confluence space to PDF, DOCX, Markdown or HTML — with attachments embedded, optional consolidated volumes, and an interactive terminal UI.**
+
+[![PyPI](https://img.shields.io/pypi/v/confluence-exporter.svg)](https://pypi.org/project/confluence-exporter/)
+[![Python](https://img.shields.io/pypi/pyversions/confluence-exporter.svg)](https://pypi.org/project/confluence-exporter/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+</div>
+
+Built for teams that need to **archive, migrate, or feed their wiki into an LLM** (NotebookLM, RAG pipelines, LLM fine-tuning). The tool produces clean, self-contained PDFs with embedded images and merged attachment appendices — no missing links, no 0 KB files, no orphaned binary blobs.
+
+---
+
+## Highlights
+
+- 🔐 **Three auth strategies**: API token (Basic), Personal Access Token (Bearer), or **browser-cookie paste** — works on SSO-locked tenants where API tokens are disabled. Cookie parser is generic: paste the full `Cookie:` header from DevTools and any session-cookie name (`cloud.session.token`, `tenant.session.token`, …) works.
+- 🖨️ **Pluggable PDF engines** with automatic fallback: **Playwright → WeasyPrint → xhtml2pdf**. Pick one explicitly or let the tool auto-detect the best one you have installed.
+- 📎 **Attachments really embedded**: PDFs get merged as appendix pages into each document; images are inlined; others are listed with links.
+- 📚 **Consolidated volumes**: merge the per-page PDFs of a space into a few big PDFs with a generated **Table of Contents** and a **hierarchical PDF bookmark outline** — upload-ready for NotebookLM.
+- 🪟 **Windows long-path safe**: deep Confluence hierarchies that exceed `MAX_PATH` (260 chars) are handled via `\\?\` prefixing and a `_flat` fallback bucket.
+- ⚡ **Resumable**: a per-space lockfile skips pages that haven't changed, so re-runs take seconds.
+- 🎨 **Nice terminal UI**: colored prompts, progress bars, summary tables (powered by [Rich](https://github.com/Textualize/rich) + [Typer](https://typer.tiangolo.com/)).
+
+---
+
+## Installation
+
+```bash
+pip install confluence-exporter
+```
+
+For best-quality PDFs (recommended), also install Playwright:
+
+```bash
+pip install "confluence-exporter[playwright]"
+playwright install chromium
+```
+
+All engines in one shot:
+
+```bash
+pip install "confluence-exporter[all]"
+playwright install chromium
+```
+
+Requires Python **3.10+**.
+
+---
+
+## Quick start
+
+```bash
+# Interactive menu (recommended first run)
+confluence-exporter
+
+# Or the short alias
+cfx
+```
+
+The tool walks you through auth setup, target space, format, and saves your choices to `config.json`. Subsequent runs re-use it.
+
+### Non-interactive / scripted usage
+
+```bash
+# Run subcommands directly
+cfx export   --space MYKEY --format pdf --output ./out -y
+cfx convert  ./out --engine playwright --merge -y
+cfx merge    ./out_converted ./out_volumes --mode per_section -y
+
+# Inspect what's installed & check credentials
+cfx diagnose
+
+# Edit or (re)create the config file
+cfx init-config
+```
+
+Run `cfx <command> --help` for all options.
+
+---
+
+## Three modes, end to end
+
+### 1. **Export** — download a Confluence space
+
+```bash
+cfx export
+```
+
+Writes pages + attachments to the output folder:
+
+```
+output/
+└── MySpace/
+    ├── Overview/
+    │   ├── Introduction.html
+    │   └── Architecture.html
+    ├── attachments/
+    │   ├── Introduction/
+    │   │   └── diagram.png
+    │   └── _flat/
+    │       └── 12345_long-attachment-name.pdf
+    └── _flat/                      # pages whose path was too long for Windows
+        └── Nested_Deep_Page_9999.html
+```
+
+### 2. **Convert** — HTML → PDF / DOCX with embedded attachments
+
+```bash
+cfx convert ./output
+```
+
+Produces `./output_converted/` mirroring the source tree. Each PDF has its page's PDF attachments merged as appendix pages. The conversion tolerates deep Windows paths (renders via `%TEMP%` and moves into place) and validates every output via magic-byte + size checks — **no 0 KB files slip through**.
+
+### 3. **Merge** — consolidated volumes for NotebookLM / archival
+
+```bash
+cfx merge ./output_converted ./output_volumes
+```
+
+Three grouping modes:
+
+| Mode           | Output                                           | Best for                                                |
+| -------------- | ------------------------------------------------ | ------------------------------------------------------- |
+| `per_section`  | One PDF per top-level folder of each space       | NotebookLM sources (smaller, focused)                   |
+| `per_space`    | One PDF per Confluence space                     | Sharing a whole space as a single file                  |
+| `single`       | One PDF for everything                           | Archival / grep-friendly single file                    |
+
+Each volume contains a generated **Table of Contents** page (page numbers + nesting) and a **PDF outline** that every reader (Acrobat, Edge, Chrome, Foxit…) shows as a navigation sidebar.
+
+---
+
+## Authentication
+
+### Option 1 — Atlassian API token (easiest, if your admin allows it)
+
+```json
+"auth_mode": "api_token",
+"email": "you@company.com",
+"api_token": "ATATT3x…"
+```
+
+Get a token at <https://id.atlassian.com/manage-profile/security/api-tokens>.
+
+### Option 2 — Browser cookie (for SSO-only tenants)
+
+```json
+"auth_mode": "browser_cookie",
+"cookies": {
+  "cloud.session.token": "eyJ…",
+  "atlassian.xsrf.token": "…"
+}
+```
+
+Easiest way to set this up:
+
+```bash
+cfx init-config   # or choose menu option 5
+```
+
+The tool walks you through copying the full `Cookie:` header from DevTools — it then parses and forwards every cookie the browser would send, so it doesn't matter whether your tenant uses `cloud.session.token`, `tenant.session.token`, `JSESSIONID` or something else.
+
+### Option 3 — Personal Access Token (Server / Data Center)
+
+```json
+"auth_mode": "pat",
+"personal_access_token": "NjAxM…"
+```
+
+Sent as `Authorization: Bearer …`.
+
+---
+
+## Configuration
+
+A full `config.json` looks like [`examples/config.example.json`](examples/config.example.json). All fields have sane defaults and are overridable via CLI flags.
+
+Keys starting with `_` are treated as inline documentation and ignored at load time.
+
+---
+
+## Using as a library
+
+```python
+from pathlib import Path
+from confluence_exporter import (
+    load_config, ConfluenceClient, SpaceExporter, OutputConverter, PDFMerger
+)
+
+cfg = load_config("config.json")
+client = ConfluenceClient.from_config(cfg.confluence)
+
+# Download
+SpaceExporter(cfg, client).run()
+
+# Convert to PDF
+OutputConverter(
+    output_root=Path(cfg.export.output_path),
+    target_format="pdf",
+    engine="playwright",
+).run()
+
+# Merge into volumes
+PDFMerger(
+    source_root=Path(cfg.export.output_path + "_converted"),
+    dest_root=Path("./volumes"),
+    mode="per_section",
+).run()
+```
+
+---
+
+## Troubleshooting
+
+| Symptom                                          | Likely cause / fix                                                                                                           |
+| ------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `HTTP 401 Unauthorized`                          | API token disabled by admin → switch to `browser_cookie` mode.                                                                |
+| `HTTP 403 Forbidden` when exporting PDFs         | Confluence's native PDF endpoint is disabled; the tool will fall through to local rendering automatically.                    |
+| `Playwright Chromium binary not installed`       | `python -m playwright install chromium`.                                                                                      |
+| `[Errno 2] No such file or directory` (Windows)  | Path exceeds MAX_PATH. The tool falls back to `_flat/` automatically — enable it in your run.                                 |
+| 0 KB PDFs                                        | The older engine couldn't render a page. Install Playwright and rerun: `cfx convert --engine playwright`.                     |
+
+Run `cfx diagnose` any time to see what's installed and confirm your credentials.
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome!
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
