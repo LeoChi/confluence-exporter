@@ -21,6 +21,16 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+
+      # xhtml2pdf -> svglib -> rlpycairo -> pycairo needs libcairo2-dev on Linux
+      # (Windows/macOS get prebuilt wheels from PyPI).
+      - name: Install native build deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libcairo2-dev pkg-config
+
       - name: Install package with dev extras
         run: |
           python -m pip install --upgrade pip
