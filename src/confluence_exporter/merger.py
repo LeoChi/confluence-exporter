@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import html
 import shutil
 import tempfile
@@ -263,10 +264,8 @@ class PDFMerger:
             logger.error("  [FAIL] %s: %s", group_label, e)
             return False
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
-            except Exception:
-                pass
 
     # ------------------------------------------------------------------
     # Public entry

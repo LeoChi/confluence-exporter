@@ -16,6 +16,7 @@ the final destination, so Windows long-paths never block output.
 from __future__ import annotations
 
 import atexit
+import contextlib
 import os
 import tempfile
 from abc import ABC, abstractmethod
@@ -207,10 +208,8 @@ class PlaywrightEngine(PDFEngine):
             except Exception as e:
                 render_err = e
             finally:
-                try:
+                with contextlib.suppress(Exception):
                     page.close()
-                except Exception:
-                    pass
 
             if render_err is not None:
                 msg = str(render_err)
@@ -318,10 +317,8 @@ def render_html_to_pdf(
 
     # Clean up any leftover 0-byte file
     if os.path.exists(output_path) and not is_valid_pdf(output_path):
-        try:
+        with contextlib.suppress(OSError):
             os.remove(output_path)
-        except OSError:
-            pass
     return False, last_error
 
 

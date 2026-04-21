@@ -19,6 +19,7 @@ package (``python3-tk``); on Windows and macOS it ships with Python.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import queue
 import sys
@@ -41,7 +42,6 @@ from confluence_exporter.converter import OutputConverter
 from confluence_exporter.exporter import SpaceExporter
 from confluence_exporter.merger import PDFMerger
 from confluence_exporter.pdf_engines import detect_engine, engine_names
-
 
 # ---------------------------------------------------------------------------
 # Thread <-> UI bridge
@@ -83,10 +83,8 @@ class _QueueLogHandler(logging.Handler):
         self.setFormatter(logging.Formatter("%(message)s"))
 
     def emit(self, record: logging.LogRecord) -> None:
-        try:
+        with contextlib.suppress(Exception):  # pragma: no cover
             self._uiq.log(self.format(record))
-        except Exception:  # pragma: no cover
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -399,10 +397,8 @@ class AuthTab(_BaseTab):
 
     def _sync_fields(self) -> None:
         for f in (self._api_frame, self._pat_frame, self._cookie_frame):
-            try:
+            with contextlib.suppress(Exception):
                 f.pack_forget()
-            except Exception:
-                pass
         mode = self.auth_mode.get()
         if mode == "api_token":
             self._api_frame.pack(in_=self._auth_holder, fill=tk.X)
@@ -412,12 +408,17 @@ class AuthTab(_BaseTab):
             self._cookie_frame.pack(in_=self._auth_holder, fill=tk.BOTH, expand=True)
 
     def refresh_from(self, cfg: AppConfig) -> None:
-        self.base_url.delete(0, tk.END); self.base_url.insert(0, cfg.confluence.base_url or "")
-        self.space_key.delete(0, tk.END); self.space_key.insert(0, cfg.confluence.space_key or "")
+        self.base_url.delete(0, tk.END)
+        self.base_url.insert(0, cfg.confluence.base_url or "")
+        self.space_key.delete(0, tk.END)
+        self.space_key.insert(0, cfg.confluence.space_key or "")
         self.auth_mode.set(cfg.confluence.auth_mode or "api_token")
-        self.email.delete(0, tk.END); self.email.insert(0, cfg.confluence.email or "")
-        self.api_token.delete(0, tk.END); self.api_token.insert(0, cfg.confluence.api_token or "")
-        self.pat_token.delete(0, tk.END); self.pat_token.insert(0, cfg.confluence.personal_access_token or "")
+        self.email.delete(0, tk.END)
+        self.email.insert(0, cfg.confluence.email or "")
+        self.api_token.delete(0, tk.END)
+        self.api_token.insert(0, cfg.confluence.api_token or "")
+        self.pat_token.delete(0, tk.END)
+        self.pat_token.insert(0, cfg.confluence.personal_access_token or "")
         self.cookie_text.delete("1.0", tk.END)
         if cfg.confluence.cookies:
             self.cookie_text.insert("1.0", "\n".join(f"{k}={v}" for k, v in cfg.confluence.cookies.items()))
@@ -466,8 +467,10 @@ class ExportTab(_BaseTab):
         ).grid(row=0, column=1, sticky="w", padx=8)
 
         ttk.Label(grid, text="Output folder").grid(row=1, column=0, sticky="w", pady=4)
-        row = ttk.Frame(grid); row.grid(row=1, column=1, sticky="ew", padx=8)
-        self.output = ttk.Entry(row); self.output.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        row = ttk.Frame(grid)
+        row.grid(row=1, column=1, sticky="ew", padx=8)
+        self.output = ttk.Entry(row)
+        self.output.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(row, text="Browse…",
                    command=lambda: _pick_folder(self.output, "Pick output folder")
                    ).pack(side=tk.LEFT, padx=(6, 0))
@@ -497,7 +500,8 @@ class ExportTab(_BaseTab):
 
     def refresh_from(self, cfg: AppConfig) -> None:
         self.fmt.set(cfg.export.format)
-        self.output.delete(0, tk.END); self.output.insert(0, cfg.export.output_path)
+        self.output.delete(0, tk.END)
+        self.output.insert(0, cfg.export.output_path)
         self.include_attachments.set(cfg.export.include_attachments)
         self.skip_unchanged.set(cfg.export.skip_unchanged)
 
@@ -539,8 +543,10 @@ class ConvertTab(_BaseTab):
         grid.columnconfigure(1, weight=1)
 
         ttk.Label(grid, text="Source folder (HTML export)").grid(row=0, column=0, sticky="w", pady=4)
-        row = ttk.Frame(grid); row.grid(row=0, column=1, sticky="ew", padx=8)
-        self.src = ttk.Entry(row); self.src.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        row = ttk.Frame(grid)
+        row.grid(row=0, column=1, sticky="ew", padx=8)
+        self.src = ttk.Entry(row)
+        self.src.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(row, text="Browse…",
                    command=lambda: _pick_folder(self.src, "Pick source folder")
                    ).pack(side=tk.LEFT, padx=(6, 0))
@@ -567,7 +573,8 @@ class ConvertTab(_BaseTab):
         ttk.Button(self, text="▶  Run convert", command=self._on_run).pack(pady=(18, 0))
 
     def refresh_from(self, cfg: AppConfig) -> None:
-        self.src.delete(0, tk.END); self.src.insert(0, cfg.export.output_path)
+        self.src.delete(0, tk.END)
+        self.src.insert(0, cfg.export.output_path)
         self.engine.set(cfg.convert.engine)
 
     def write_into(self, cfg: AppConfig) -> None:
@@ -604,26 +611,32 @@ class ConvertTab(_BaseTab):
 
 class MergeTab(_BaseTab):
     def _build(self) -> None:
-        grid = ttk.Frame(self); grid.pack(fill=tk.X)
+        grid = ttk.Frame(self)
+        grid.pack(fill=tk.X)
         grid.columnconfigure(1, weight=1)
 
         ttk.Label(grid, text="Source folder (per-page PDFs)").grid(row=0, column=0, sticky="w", pady=4)
-        row = ttk.Frame(grid); row.grid(row=0, column=1, sticky="ew", padx=8)
-        self.src = ttk.Entry(row); self.src.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        row = ttk.Frame(grid)
+        row.grid(row=0, column=1, sticky="ew", padx=8)
+        self.src = ttk.Entry(row)
+        self.src.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(row, text="Browse…",
                    command=lambda: _pick_folder(self.src, "Pick source folder")
                    ).pack(side=tk.LEFT, padx=(6, 0))
 
         ttk.Label(grid, text="Destination folder").grid(row=1, column=0, sticky="w", pady=4)
-        row2 = ttk.Frame(grid); row2.grid(row=1, column=1, sticky="ew", padx=8)
-        self.dst = ttk.Entry(row2); self.dst.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        row2 = ttk.Frame(grid)
+        row2.grid(row=1, column=1, sticky="ew", padx=8)
+        self.dst = ttk.Entry(row2)
+        self.dst.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(row2, text="Browse…",
                    command=lambda: _pick_folder(self.dst, "Pick destination folder")
                    ).pack(side=tk.LEFT, padx=(6, 0))
 
         ttk.Label(grid, text="Merge mode").grid(row=2, column=0, sticky="w", pady=(10, 4))
         self.mode = tk.StringVar(value="per_section")
-        frm = ttk.Frame(grid); frm.grid(row=2, column=1, sticky="w", padx=8)
+        frm = ttk.Frame(grid)
+        frm.grid(row=2, column=1, sticky="w", padx=8)
         for label, val in [
             ("per_section (NotebookLM-friendly)", "per_section"),
             ("per_space", "per_space"),

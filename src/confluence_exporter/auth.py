@@ -13,13 +13,11 @@ a full ``Cookie:`` header from DevTools and we parse it.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any
 
 import requests
 from requests.auth import AuthBase, HTTPBasicAuth
 
 from confluence_exporter.config import ConfluenceConfig
-
 
 # ---------------------------------------------------------------------------
 # Contract

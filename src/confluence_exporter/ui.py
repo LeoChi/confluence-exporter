@@ -6,8 +6,8 @@ through this module so the look-and-feel stays consistent.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from contextlib import contextmanager
-from typing import Iterable
 
 from rich.console import Console
 from rich.panel import Panel

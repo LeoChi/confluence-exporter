@@ -7,6 +7,7 @@ with ``\\\\?\\`` bypasses the limit for most Python file APIs.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 from pathlib import Path
@@ -66,20 +67,16 @@ def move_into_place(src: str | Path, dst: str | Path) -> bool:
     """
     src = str(src)
     dst = str(dst)
-    try:
+    with contextlib.suppress(OSError):
         safe_makedirs(os.path.dirname(dst) or ".")
-    except OSError:
-        pass
     try:
         os.replace(long_path(src), long_path(dst))
         return True
     except OSError:
         try:
             shutil.copyfile(long_path(src), long_path(dst))
-            try:
+            with contextlib.suppress(OSError):
                 os.remove(long_path(src))
-            except OSError:
-                pass
             return True
         except OSError:
             return False

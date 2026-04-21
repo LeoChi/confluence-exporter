@@ -139,10 +139,10 @@ def clean_confluence_html(html_str: str, attachment_map: dict[str, str]) -> str:
             table.append(tbody)
 
     # -- strip noisy attributes -------------------------------------------
-    _ATTR_PREFIXES = ("data-", "ac-", "ac:")
+    attr_prefixes = ("data-", "ac-", "ac:")
     for tag in soup.find_all(True):
         for attr in list(tag.attrs):
-            if any(attr.startswith(p) for p in _ATTR_PREFIXES):
+            if any(attr.startswith(p) for p in attr_prefixes):
                 del tag.attrs[attr]
 
     body = soup.body

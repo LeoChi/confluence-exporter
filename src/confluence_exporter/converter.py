@@ -8,12 +8,13 @@ optionally merges PDF attachments as appendix pages.
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 import shutil
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 from confluence_exporter.filename import short_section_name
 from confluence_exporter.formatters import DocxFormatter
@@ -257,10 +258,7 @@ class OutputConverter:
                             if n.lower().endswith(".pdf")
                         ] if self.merge_pdf_attachments else []
 
-                        if pdf_attachments:
-                            tmp_main = str(out_path) + ".main.pdf"
-                        else:
-                            tmp_main = str(out_path)
+                        tmp_main = str(out_path) + ".main.pdf" if pdf_attachments else str(out_path)
 
                         success, used = render_html_to_pdf(
                             full_html, tmp_main, preference=self.engine
@@ -277,10 +275,8 @@ class OutputConverter:
                                 merged_count += 1
                             else:
                                 move_into_place(tmp_main, str(out_path))
-                            try:
+                            with contextlib.suppress(OSError):
                                 os.remove(tmp_main)
-                            except OSError:
-                                pass
 
                         if not is_valid_pdf(str(out_path)):
                             raise RuntimeError("Resulting PDF is invalid")

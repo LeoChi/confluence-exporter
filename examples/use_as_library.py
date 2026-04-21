@@ -34,7 +34,6 @@ from pathlib import Path
 #   b) build an AppConfig in code.
 #
 # Below is option (b) — no config file needed.
-
 from confluence_exporter import (
     AppConfig,
     ConfluenceClient,
