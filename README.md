@@ -154,6 +154,45 @@ output/
         └── Nested_Deep_Page_9999.html
 ```
 
+#### Incremental updates
+
+Re-running `export` is **safe and fast**: it compares the live Confluence space against the per-space lockfile and only downloads what actually changed. Each page falls into one of four buckets:
+
+| State | Meaning | Action |
+| --- | --- | --- |
+| **NEW** | Page exists in Confluence, not in the lockfile | Download |
+| **UPDATED** | Newer version on Confluence (or local file is missing) | Re-download |
+| **UNCHANGED** | Same version, file still on disk | Skip |
+| **DELETED-UPSTREAM** | In the lockfile but no longer in Confluence | Optionally remove (`cleanup_stale: true`) |
+
+To **preview** what an export would do — without downloading anything — use the `status` command:
+
+```bash
+cfx status                     # summary only
+cfx status --titles            # also list the actual page titles
+cfx status --titles -n 50      # bump the per-bucket cap from 20 to 50
+```
+
+Sample output:
+
+```
+Diff
+┏━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━┓
+┃ Status                ┃ #    ┃
+┡━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━┩
+│ New                   │   3  │
+│ Updated               │  12  │
+│ Unchanged             │ 247  │
+│ Deleted upstream      │   1  │
+│ Total in Confluence   │ 262  │
+└───────────────────────┴──────┘
+→ Running export would download 3 new + 12 updated page(s).
+```
+
+The GUI exposes the same thing as a "🔍 Check status" button on the Export tab.
+
+> **Tip**: if you delete a PDF on disk, the next run notices and re-downloads it (the lockfile alone isn't trusted — we also check the file is actually there).
+
 ### 2. **Convert** — HTML → PDF / DOCX with embedded attachments
 
 ```bash
