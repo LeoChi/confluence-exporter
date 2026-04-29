@@ -482,17 +482,20 @@ class ExportTab(_BaseTab):
 
         self.skip_unchanged = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            grid, text="Skip pages unchanged since last run",
+            grid, text="Skip pages unchanged since last run (incremental update)",
             variable=self.skip_unchanged,
         ).grid(row=3, column=1, sticky="w", padx=8)
 
-        ttk.Button(self, text="▶  Run export", command=self._on_run).pack(pady=(18, 0))
+        btns = ttk.Frame(self)
+        btns.pack(pady=(18, 0))
+        ttk.Button(btns, text="🔍  Check status", command=self._on_status).pack(side=tk.LEFT)
+        ttk.Button(btns, text="▶  Run export", command=self._on_run).pack(side=tk.LEFT, padx=(8, 0))
 
         ttk.Label(
             self,
             text=(
-                "Tip: configure connection in tab 1, then come back here.\n"
-                "The export reads its credentials from the Connection tab / config file."
+                "Tip: 'Check status' lists how many pages are NEW / UPDATED / UNCHANGED\n"
+                "without downloading anything — handy before re-running an export."
             ),
             foreground="#555",
             justify="left",
@@ -528,12 +531,45 @@ class ExportTab(_BaseTab):
                 self.app._uiq.progress(i, total, title[:70])
 
             exporter = SpaceExporter(self.app.cfg, client, progress=cb)
-            written, skipped, failed = exporter.run()
+            result = exporter.run()
             self.app._uiq.log(
-                f"Export done — written: {written}, skipped: {skipped}, failed: {failed}"
+                f"Export done — new: {result.new_count}, updated: {result.updated_count}, "
+                f"unchanged: {result.unchanged_count}, failed: {result.failed_count}"
             )
 
         self.app.run_worker("Exporting space", target)
+
+    def _on_status(self) -> None:
+        """Run compute_diff() in a worker thread and show the result."""
+        self.app._collect_config_from_tabs()
+        errs = self.app.cfg.validate()
+        if errs:
+            messagebox.showerror("Missing fields", "\n".join(errs))
+            return
+
+        def target() -> None:
+            client = ConfluenceClient.from_config(
+                self.app.cfg.confluence,
+                request_delay_seconds=self.app.cfg.export.request_delay_seconds,
+            )
+            exporter = SpaceExporter(self.app.cfg, client)
+            self.app._uiq.log("Listing pages and comparing to local state…")
+            diff = exporter.compute_diff()
+            s = diff.summary()
+            self.app._uiq.log(
+                f"Status: {s['new']} new, {s['updated']} updated, "
+                f"{s['unchanged']} unchanged, {s['deleted']} deleted upstream "
+                f"(total in Confluence: {diff.total_remote})"
+            )
+            if s["new"] == 0 and s["updated"] == 0:
+                self.app._uiq.log("✓ Already up to date — nothing to download.")
+            else:
+                self.app._uiq.log(
+                    f"→ Running 'Run export' would download "
+                    f"{s['new']} new + {s['updated']} updated page(s)."
+                )
+
+        self.app.run_worker("Checking status", target)
 
 
 class ConvertTab(_BaseTab):

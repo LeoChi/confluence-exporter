@@ -247,23 +247,26 @@ def interactive_menu(ctx: typer.Context) -> None:
         console.print()
         console.print("[primary]Choose an action:[/primary]")
         console.print("  [accent]1[/accent]  Export a Confluence space")
-        console.print("  [accent]2[/accent]  Convert exported HTML → PDF/DOCX")
-        console.print("  [accent]3[/accent]  Merge PDFs into consolidated volumes")
-        console.print("  [accent]4[/accent]  Diagnose (check engines + connection)")
-        console.print("  [accent]5[/accent]  Initialize or edit config file")
+        console.print("  [accent]2[/accent]  Status — preview what export would do (incremental diff)")
+        console.print("  [accent]3[/accent]  Convert exported HTML → PDF/DOCX")
+        console.print("  [accent]4[/accent]  Merge PDFs into consolidated volumes")
+        console.print("  [accent]5[/accent]  Diagnose (check engines + connection)")
+        console.print("  [accent]6[/accent]  Initialize or edit config file")
         console.print("  [accent]q[/accent]  Quit")
-        choice = ask("Your choice", default="1", choices=["1", "2", "3", "4", "5", "q"])
+        choice = ask("Your choice", default="1", choices=["1", "2", "3", "4", "5", "6", "q"])
         if choice == "q":
             break
         if choice == "1":
             export_cmd(ctx)
         elif choice == "2":
-            convert_cmd(ctx)
+            status_cmd(ctx)
         elif choice == "3":
-            merge_cmd(ctx)
+            convert_cmd(ctx)
         elif choice == "4":
-            diagnose(ctx)
+            merge_cmd(ctx)
         elif choice == "5":
+            diagnose(ctx)
+        elif choice == "6":
             init_config(ctx)
 
 
@@ -346,18 +349,22 @@ def _run_export(cfg: AppConfig, client: ConfluenceClient) -> None:
                             description=f"[accent]{title[:70]}[/accent]")
 
         exporter = SpaceExporter(cfg, client, progress=cb)
-        written, skipped, failed = exporter.run()
+        result = exporter.run()
 
     summary_table("Export summary", {
-        "Pages written":  str(written),
-        "Pages skipped":  str(skipped),
-        "Pages failed":   str(failed),
-        "Output folder":  str(Path(cfg.export.output_path).resolve()),
+        "Pages new":           str(result.new_count),
+        "Pages updated":       str(result.updated_count),
+        "Pages unchanged":     str(result.unchanged_count),
+        "Pages failed":        str(result.failed_count),
+        "Deleted upstream":    str(result.deleted_upstream),
+        "Output folder":       str(Path(cfg.export.output_path).resolve()),
     })
-    if failed:
+    if result.failed_count:
         warn("Some pages failed — check the log above.")
+    elif result.new_count == 0 and result.updated_count == 0:
+        ok("Already up to date — nothing to download.")
     else:
-        ok("Export finished successfully.")
+        ok(f"Export finished: {result.new_count} new, {result.updated_count} updated.")
 
 
 # ---------------------------------------------------------------------------
@@ -506,6 +513,89 @@ def merge_cmd(
         "Failures":      str(fail_n),
         "Output":        str(destination.resolve()),
     })
+
+
+# ---------------------------------------------------------------------------
+# Subcommand: status — preview what an export would do
+# ---------------------------------------------------------------------------
+
+
+@app.command("status")
+def status_cmd(
+    ctx: typer.Context,
+    show_titles: bool = typer.Option(
+        False, "--titles/--no-titles",
+        help="List the actual page titles in each bucket (can be long).",
+    ),
+    limit: int = typer.Option(
+        20, "--limit", "-n",
+        help="Max titles per bucket when --titles is on.",
+    ),
+) -> None:
+    """Preview what a re-run of `export` would do — without downloading anything.
+
+    Compares the live Confluence space against your local lockfile + on-disk
+    files and shows how many pages are NEW, UPDATED, UNCHANGED, or DELETED
+    upstream. Useful for incremental update planning.
+    """
+    cfg = _load(ctx)
+    errors = cfg.validate()
+    if errors:
+        for e in errors:
+            error(e)
+        raise typer.Exit(1)
+
+    section("Status — incremental diff")
+
+    client = ConfluenceClient.from_config(
+        cfg.confluence, request_delay_seconds=cfg.export.request_delay_seconds
+    )
+    try:
+        client.test_connection()
+    except ConfluenceError as e:
+        error(str(e))
+        raise typer.Exit(1) from e
+
+    info("Listing pages and comparing to local state…")
+    exporter = SpaceExporter(cfg, client)
+    diff = exporter.compute_diff()
+    s = diff.summary()
+
+    summary_table("Diff", {
+        "[success]New[/success]":          str(s["new"]),
+        "[warning]Updated[/warning]":      str(s["updated"]),
+        "[muted]Unchanged[/muted]":        str(s["unchanged"]),
+        "[error]Deleted upstream[/error]": str(s["deleted"]),
+        "Total in Confluence":             str(diff.total_remote),
+    })
+
+    if show_titles:
+        if diff.new:
+            info("Pages that are NEW:")
+            for p in diff.new[:limit]:
+                console.print(f"  [success]+[/success] {p.get('title', '?')}")
+            if len(diff.new) > limit:
+                console.print(f"  [muted]… and {len(diff.new) - limit} more[/muted]")
+        if diff.updated:
+            info("Pages that have been UPDATED upstream:")
+            for p in diff.updated[:limit]:
+                console.print(f"  [warning]~[/warning] {p.get('title', '?')}")
+            if len(diff.updated) > limit:
+                console.print(f"  [muted]… and {len(diff.updated) - limit} more[/muted]")
+        if diff.deleted_ids:
+            info("Pages DELETED upstream (still in your lockfile):")
+            for pid in diff.deleted_ids[:limit]:
+                entry = exporter._lockfile._data.get(pid, {})
+                console.print(f"  [error]-[/error] page id {pid}  ({entry.get('path', '?')})")
+
+    if s["new"] == 0 and s["updated"] == 0:
+        ok("Already up to date — running `export` would be a no-op.")
+    else:
+        info(
+            f"Running [primary]export[/primary] would download "
+            f"[success]{s['new']}[/success] new + "
+            f"[warning]{s['updated']}[/warning] updated page(s)."
+        )
 
 
 # ---------------------------------------------------------------------------
