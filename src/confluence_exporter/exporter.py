@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -112,10 +113,12 @@ class SpaceExporter:
         client: ConfluenceClient,
         *,
         progress: ProgressCallback = None,
+        cancel_event: threading.Event | None = None,
     ):
         self.config = config
         self.client = client
         self._progress = progress
+        self._cancel_event = cancel_event
 
         self._formatter: Formatter = build_formatter(
             config.export.format,
@@ -127,6 +130,12 @@ class SpaceExporter:
         self.output_root = output_root.resolve()
 
         self._lockfile = Lockfile(output_root / config.export.lockfile_name)
+
+    # ------------------------------------------------------------------
+    # Cancellation
+    # ------------------------------------------------------------------
+    def _is_cancelled(self) -> bool:
+        return bool(self._cancel_event and self._cancel_event.is_set())
 
     # ------------------------------------------------------------------
     # Path helpers
@@ -272,6 +281,13 @@ class SpaceExporter:
         new_ids = {p["id"] for p in diff.new}
 
         for i, page in enumerate(to_process, 1):
+            if self._is_cancelled():
+                logger.warning(
+                    "Export cancelled by user after %d/%d page(s).",
+                    i - 1, total_work,
+                )
+                break
+
             title = page.get("title", "untitled")
             if self._progress:
                 self._progress(title, i, total_work)

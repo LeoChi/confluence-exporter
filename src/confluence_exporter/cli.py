@@ -343,13 +343,30 @@ def export_cmd(
 
 
 def _run_export(cfg: AppConfig, client: ConfluenceClient) -> None:
-    with progress_bar("Exporting pages", total=1) as (progress, task_id):
-        def cb(title: str, i: int, total: int) -> None:
-            progress.update(task_id, total=total, completed=i,
-                            description=f"[accent]{title[:70]}[/accent]")
+    import signal
+    import threading as _thr
+    cancel_event = _thr.Event()
 
-        exporter = SpaceExporter(cfg, client, progress=cb)
-        result = exporter.run()
+    # Ctrl+C → set cancel_event so the exporter exits gracefully after the
+    # current page (rather than ripping the process apart mid-HTTP request).
+    def _on_sigint(_signum, _frame) -> None:
+        if not cancel_event.is_set():
+            cancel_event.set()
+            warn("Cancelling — finishing current page, please wait…")
+
+    prev = signal.signal(signal.SIGINT, _on_sigint)
+    try:
+        with progress_bar("Exporting pages", total=1) as (progress, task_id):
+            def cb(title: str, i: int, total: int) -> None:
+                progress.update(task_id, total=total, completed=i,
+                                description=f"[accent]{title[:70]}[/accent]")
+
+            exporter = SpaceExporter(
+                cfg, client, progress=cb, cancel_event=cancel_event,
+            )
+            result = exporter.run()
+    finally:
+        signal.signal(signal.SIGINT, prev)
 
     summary_table("Export summary", {
         "Pages new":           str(result.new_count),
@@ -359,7 +376,9 @@ def _run_export(cfg: AppConfig, client: ConfluenceClient) -> None:
         "Deleted upstream":    str(result.deleted_upstream),
         "Output folder":       str(Path(cfg.export.output_path).resolve()),
     })
-    if result.failed_count:
+    if cancel_event.is_set():
+        warn("Export cancelled — partial results saved to the lockfile.")
+    elif result.failed_count:
         warn("Some pages failed — check the log above.")
     elif result.new_count == 0 and result.updated_count == 0:
         ok("Already up to date — nothing to download.")

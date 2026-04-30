@@ -6,6 +6,7 @@ import contextlib
 import html
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 from confluence_exporter.filename import short_section_name
@@ -50,6 +51,7 @@ class PDFMerger:
         *,
         mode: str = "per_section",
         engine: str = "auto",
+        cancel_event: threading.Event | None = None,
     ):
         if mode not in ("per_section", "per_space", "single"):
             raise ValueError(f"Unknown mode: {mode}")
@@ -57,6 +59,10 @@ class PDFMerger:
         self.dest_root = Path(dest_root)
         self.mode = mode
         self.engine = engine
+        self._cancel_event = cancel_event
+
+    def _is_cancelled(self) -> bool:
+        return bool(self._cancel_event and self._cancel_event.is_set())
 
     # ------------------------------------------------------------------
     # Discovery / grouping
@@ -291,6 +297,9 @@ class PDFMerger:
         fail = 0
         try:
             for space_dir in space_dirs:
+                if self._is_cancelled():
+                    logger.warning("Merge cancelled by user.")
+                    return ok, fail
                 logger.info("-- Space: %s --", space_dir.name)
                 entries = self._collect_entries(space_dir)
                 if not entries:
@@ -314,6 +323,9 @@ class PDFMerger:
                 )
 
                 for group_name, group_entries in groups.items():
+                    if self._is_cancelled():
+                        logger.warning("Merge cancelled by user.")
+                        return ok, fail
                     out_dir = (
                         self.dest_root if self.mode == "single"
                         else self.dest_root / space_dir.name
