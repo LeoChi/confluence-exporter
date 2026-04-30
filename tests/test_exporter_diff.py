@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 from confluence_exporter.config import AppConfig
@@ -194,3 +195,49 @@ def test_pagediff_summary_keys():
     d = PageDiff(new=[{"id": "1"}], updated=[], unchanged=[{"id": "2"}], deleted_ids=["3"])
     s = d.summary()
     assert s == {"new": 1, "updated": 0, "unchanged": 1, "deleted": 1}
+
+
+def test_cancel_event_stops_run_loop_between_pages(tmp_path):
+    """Setting cancel_event before a page is processed should bail out cleanly."""
+    pages = [
+        _page("1", "First", 1),
+        _page("2", "Second", 1),
+        _page("3", "Third", 1),
+    ]
+    exp = _make_exporter(tmp_path, pages)
+
+    cancel = threading.Event()
+
+    # Inject the cancel event after construction (simulating what the GUI does)
+    exp._cancel_event = cancel
+
+    # Cancel after the first page is "exported" by hooking the progress callback.
+    call_count = {"n": 0}
+
+    def cb(_title, _i, _total) -> None:
+        call_count["n"] += 1
+        if call_count["n"] == 2:
+            # Trip cancel right before the loop checks again
+            cancel.set()
+
+    exp._progress = cb
+
+    result = exp.run()
+
+    # Should have stopped before processing all 3 pages
+    assert call_count["n"] <= 2
+    # Whatever was processed should be reflected; cancel did NOT crash
+    assert isinstance(result, ExportResult)
+
+
+def test_cancel_event_set_before_run_processes_zero_pages(tmp_path):
+    pages = [_page("1", "A", 1), _page("2", "B", 1)]
+    exp = _make_exporter(tmp_path, pages)
+
+    cancel = threading.Event()
+    cancel.set()  # cancelled before we even started
+    exp._cancel_event = cancel
+
+    result = exp.run()
+    assert result.new_count == 0
+    assert result.updated_count == 0

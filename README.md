@@ -69,6 +69,10 @@ confluence-exporter-gui
 
 A Tkinter window with tabs for **Connection → Export → Convert → Merge → Diagnose**, a progress bar, and a live log pane. All long tasks run on a background thread so the UI stays responsive. No extra dependencies — Tkinter ships with Python. (On some Linux distros you may need `sudo apt install python3-tk`.)
 
+The status bar has a **⏹ Stop** button that cancels the current task gracefully — the runner finishes the page it's on, saves the lockfile, and shuts down cleanly (no torn HTTP connections, no half-written PDFs). Run buttons disable while a task is running and re-enable when it finishes or cancels. Window geometry is remembered between sessions in `~/.confluence-exporter-gui.json`.
+
+The Connection tab shows a **welcome banner** while config is incomplete (it disappears once you've set base URL + space key + credentials), and the cookie textbox **parses cookies live as you paste** — you'll see "✓ 12 cookie(s) parsed — session token: cloud.session.token" before you even click Test connection.
+
 ### CLI
 
 ```bash
@@ -91,6 +95,8 @@ cfx merge    ./out_converted ./out_volumes --mode per_section -y
 cfx diagnose        # check installed engines + credentials
 cfx init-config     # edit / (re)create config.json
 ```
+
+Press **Ctrl+C** during an export to cancel gracefully — the current page finishes, the lockfile is saved, and the next run picks up where you left off.
 
 Run `cfx <command> --help` for all options.
 
@@ -126,6 +132,22 @@ PDFMerger(
 ```
 
 A full worked example — including progress callbacks and all three auth modes — is in [`examples/use_as_library.py`](examples/use_as_library.py).
+
+**Programmatic cancellation** — pass any `threading.Event` and set it from another thread (or a signal handler) to bail out gracefully:
+
+```python
+import threading
+cancel = threading.Event()
+
+# Cancel after 30s if it isn't done by then
+threading.Timer(30, cancel.set).start()
+
+SpaceExporter(cfg, client, cancel_event=cancel).run()
+# OutputConverter(..., cancel_event=cancel)
+# PDFMerger(..., cancel_event=cancel)
+```
+
+Cancellation is **cooperative**: the runner checks the event between pages/files/groups and stops cleanly — no torn HTTP requests, no half-written PDFs.
 
 ---
 

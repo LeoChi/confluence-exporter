@@ -20,6 +20,7 @@ package (``python3-tk``); on Windows and macOS it ships with Python.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import queue
 import sys
@@ -62,6 +63,9 @@ class UIQueue:
 
     def done(self, summary: str) -> None:
         self._q.put(("done", summary))
+
+    def cancelled(self, summary: str) -> None:
+        self._q.put(("cancelled", summary))
 
     def fail(self, err: str) -> None:
         self._q.put(("fail", err))
@@ -113,18 +117,27 @@ def _pick_file(entry: ttk.Entry, title: str, filetypes) -> None:
 # ---------------------------------------------------------------------------
 
 
+_GEOMETRY_FILE = Path.home() / ".confluence-exporter-gui.json"
+
+
 class App(tk.Tk):
     """Root Tk window holding the notebook and the log pane."""
 
     def __init__(self, config_path: Path) -> None:
         super().__init__()
         self.title(f"Confluence Exporter  v{__version__}")
-        self.geometry("980x720")
+        self._restore_geometry()
         self.minsize(820, 600)
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
 
         self._config_path = config_path
         self._uiq = UIQueue()
         self._worker: threading.Thread | None = None
+        self._cancel_event: threading.Event = threading.Event()
+
+        # Buttons that should be disabled while a task runs (each tab registers
+        # its primary action button via :meth:`register_action_button`).
+        self._action_buttons: list[ttk.Button] = []
 
         # Load (or create) the config
         try:
@@ -142,6 +155,40 @@ class App(tk.Tk):
         self._build_ui()
         # Poll the queue at 20 Hz for log/progress updates
         self.after(50, self._poll_queue)
+
+    # ------------------------------------------------------------------
+    # Geometry persistence
+    # ------------------------------------------------------------------
+    def _restore_geometry(self) -> None:
+        try:
+            data = json.loads(_GEOMETRY_FILE.read_text(encoding="utf-8"))
+            geom = data.get("geometry")
+            if isinstance(geom, str) and "x" in geom:
+                self.geometry(geom)
+                return
+        except (OSError, ValueError):
+            pass
+        self.geometry("980x720")
+
+    def _save_geometry(self) -> None:
+        with contextlib.suppress(OSError):
+            _GEOMETRY_FILE.write_text(
+                json.dumps({"geometry": self.geometry()}, indent=2),
+                encoding="utf-8",
+            )
+
+    def _on_close(self) -> None:
+        # If a task is running, ask before quitting
+        if self._worker and self._worker.is_alive():
+            if not messagebox.askokcancel(
+                "Quit?",
+                "A task is still running. Quit anyway? "
+                "(it will be cancelled.)",
+            ):
+                return
+            self._cancel_event.set()
+        self._save_geometry()
+        self.destroy()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -181,13 +228,18 @@ class App(tk.Tk):
         self._nb.add(self._tab_merge, text="  4. Merge  ")
         self._nb.add(self._tab_diag, text="  Diagnose  ")
 
-        # ----- Progress bar -----
+        # ----- Progress bar + Stop button -----
         prog = ttk.Frame(self, padding=(10, 4))
         prog.pack(fill=tk.X)
-        self._progress_label = ttk.Label(prog, text="Idle")
+        self._progress_label = ttk.Label(prog, text="Idle", width=22, anchor="w")
         self._progress_label.pack(side=tk.LEFT)
         self._progress = ttk.Progressbar(prog, mode="determinate")
         self._progress.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=8)
+        self._stop_button = ttk.Button(
+            prog, text="⏹  Stop", command=self._on_stop_clicked,
+        )
+        self._stop_button.pack(side=tk.LEFT)
+        self._stop_button.state(["disabled"])  # only enabled while a task runs
 
         # ----- Log pane -----
         logframe = ttk.Labelframe(self, text="Log", padding=(6, 4))
@@ -244,13 +296,48 @@ class App(tk.Tk):
         return self._cfg
 
     # ------------------------------------------------------------------
+    # Action buttons (disabled while a task runs)
+    # ------------------------------------------------------------------
+    def register_action_button(self, btn: ttk.Button) -> None:
+        """Register a button so it auto-disables while a task is running."""
+        self._action_buttons.append(btn)
+
+    def _set_running(self, running: bool) -> None:
+        new_state = "disabled" if running else "!disabled"
+        for b in self._action_buttons:
+            b.state([new_state])
+        # Stop button is the inverse — enabled only while running
+        self._stop_button.state(["!disabled" if running else "disabled"])
+
+    @property
+    def cancel_event(self) -> threading.Event:
+        """Event passed to long-running tasks; users can call ``set()`` on it."""
+        return self._cancel_event
+
+    def _on_stop_clicked(self) -> None:
+        if not (self._worker and self._worker.is_alive()):
+            return
+        self._cancel_event.set()
+        self._progress_label.config(text="Cancelling…")
+        self._log_line("⏹  Cancellation requested — finishing current item…")
+        self._stop_button.state(["disabled"])  # one click is enough
+
+    # ------------------------------------------------------------------
     # Worker lifecycle
     # ------------------------------------------------------------------
     def run_worker(self, label: str, target) -> None:
-        """Run ``target()`` in a thread. Disables action buttons while running."""
+        """Run ``target()`` in a background thread.
+
+        Disables registered action buttons, enables the Stop button, and
+        gives the worker a fresh :class:`threading.Event` it can pass on
+        to the library runners for cooperative cancellation.
+        """
         if self._worker and self._worker.is_alive():
             messagebox.showwarning("Busy", "A task is already running.")
             return
+
+        self._cancel_event.clear()
+        self._set_running(True)
         self._progress["value"] = 0
         self._progress["maximum"] = 1
         self._progress_label.config(text=label + " …")
@@ -264,7 +351,10 @@ class App(tk.Tk):
             except Exception as e:
                 self._uiq.fail(f"{e}\n{traceback.format_exc()}")
             else:
-                self._uiq.done(label + " finished.")
+                if self._cancel_event.is_set():
+                    self._uiq.cancelled(label + " cancelled.")
+                else:
+                    self._uiq.done(label + " finished.")
 
         self._worker = threading.Thread(target=run, daemon=True)
         self._worker.start()
@@ -282,9 +372,15 @@ class App(tk.Tk):
             elif kind == "done":
                 self._progress_label.config(text=str(payload))
                 self._log_line(f"✓ {payload}")
+                self._set_running(False)
+            elif kind == "cancelled":
+                self._progress_label.config(text=str(payload))
+                self._log_line(f"⏹  {payload}")
+                self._set_running(False)
             elif kind == "fail":
                 self._progress_label.config(text="Failed")
                 self._log_line(f"✗ {payload}")
+                self._set_running(False)
                 messagebox.showerror("Task failed", str(payload))
         self.after(50, self._poll_queue)
 
@@ -325,6 +421,23 @@ class AuthTab(_BaseTab):
     """Confluence target + authentication."""
 
     def _build(self) -> None:
+        # First-run banner: only shown until the user has enough config to run
+        self._banner = tk.Frame(self, background="#fff3cd", padx=12, pady=8)
+        self._banner_label = tk.Label(
+            self._banner,
+            text=(
+                "👋 Welcome! Fill in the four fields below, hit "
+                "“Test connection”, then “Save to config”. "
+                "After that the Export tab is ready to go."
+            ),
+            background="#fff3cd",
+            foreground="#664d03",
+            wraplength=900,
+            justify="left",
+            anchor="w",
+        )
+        self._banner_label.pack(fill=tk.X)
+
         grid = ttk.Frame(self)
         grid.pack(fill=tk.X)
         for i in range(2):
@@ -333,10 +446,12 @@ class AuthTab(_BaseTab):
         ttk.Label(grid, text="Base URL").grid(row=0, column=0, sticky="w", pady=4)
         self.base_url = ttk.Entry(grid)
         self.base_url.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        self.base_url.bind("<KeyRelease>", lambda _e: self._refresh_banner_now())
 
         ttk.Label(grid, text="Space key").grid(row=1, column=0, sticky="w", pady=4)
         self.space_key = ttk.Entry(grid)
         self.space_key.grid(row=1, column=1, sticky="ew", padx=(8, 0))
+        self.space_key.bind("<KeyRelease>", lambda _e: self._refresh_banner_now())
 
         ttk.Label(grid, text="Auth mode").grid(row=2, column=0, sticky="w", pady=(12, 4))
         self.auth_mode = tk.StringVar(value="api_token")
@@ -381,12 +496,23 @@ class AuthTab(_BaseTab):
         ttk.Label(self._cookie_frame, text=help_txt, foreground="#555").pack(anchor="w")
         self.cookie_text = scrolledtext.ScrolledText(self._cookie_frame, height=6, wrap=tk.WORD)
         self.cookie_text.pack(fill=tk.BOTH, expand=True, pady=(6, 0))
+        # Live feedback as the user pastes / types
+        self._cookie_status = ttk.Label(
+            self._cookie_frame, text="No cookies parsed yet.", foreground="#888",
+        )
+        self._cookie_status.pack(anchor="w", pady=(4, 0))
+        self.cookie_text.bind("<<Modified>>", self._on_cookie_text_changed)
+        # The <KeyRelease> handler catches typing; <<Paste>> covers right-click → paste
+        self.cookie_text.bind("<KeyRelease>", self._on_cookie_text_changed)
 
         # Test connection
         btns = ttk.Frame(self)
         btns.pack(fill=tk.X, pady=(14, 0))
-        ttk.Button(btns, text="Test connection", command=self._on_test).pack(side=tk.LEFT)
-        ttk.Button(btns, text="Save to config", command=self.app._save_config).pack(side=tk.LEFT, padx=8)
+        self._test_btn = ttk.Button(btns, text="Test connection", command=self._on_test)
+        self._test_btn.pack(side=tk.LEFT)
+        self._save_btn = ttk.Button(btns, text="Save to config", command=self.app._save_config)
+        self._save_btn.pack(side=tk.LEFT, padx=8)
+        self.app.register_action_button(self._test_btn)
 
         # Layout the three conditional frames in the same spot
         self._auth_holder = ttk.Frame(self)
@@ -407,6 +533,41 @@ class AuthTab(_BaseTab):
         else:
             self._cookie_frame.pack(in_=self._auth_holder, fill=tk.BOTH, expand=True)
 
+    def _on_cookie_text_changed(self, _event=None) -> None:
+        """Re-parse the cookie textbox and update the live status label."""
+        # Reset the <<Modified>> flag, otherwise it only fires once
+        with contextlib.suppress(Exception):
+            self.cookie_text.edit_modified(False)
+        raw = self.cookie_text.get("1.0", tk.END).strip()
+        if not raw:
+            self._cookie_status.config(
+                text="No cookies parsed yet.", foreground="#888",
+            )
+            return
+        cookies = parse_cookie_header(raw)
+        if not cookies:
+            self._cookie_status.config(
+                text="✗ Could not parse any cookies — check the format.",
+                foreground="#c00",
+            )
+            return
+        # Highlight likely session token
+        from confluence_exporter.auth import find_likely_session_cookies
+        session = find_likely_session_cookies(cookies)
+        if session:
+            self._cookie_status.config(
+                text=f"✓ {len(cookies)} cookie(s) parsed — session token: "
+                     f"{', '.join(sorted(session))}",
+                foreground="#0a0",
+            )
+        else:
+            self._cookie_status.config(
+                text=f"⚠ {len(cookies)} cookie(s) parsed but no obvious session "
+                     f"token (cloud.session.token / tenant.session.token). "
+                     f"They'll still be forwarded.",
+                foreground="#a60",
+            )
+
     def refresh_from(self, cfg: AppConfig) -> None:
         self.base_url.delete(0, tk.END)
         self.base_url.insert(0, cfg.confluence.base_url or "")
@@ -423,6 +584,41 @@ class AuthTab(_BaseTab):
         if cfg.confluence.cookies:
             self.cookie_text.insert("1.0", "\n".join(f"{k}={v}" for k, v in cfg.confluence.cookies.items()))
         self._sync_fields()
+        self._refresh_banner(cfg)
+        self._on_cookie_text_changed()
+
+    def _refresh_banner_now(self) -> None:
+        """Read the live form into a temp config and refresh the banner."""
+        cfg = AppConfig()
+        self.write_into(cfg)
+        self._refresh_banner(cfg)
+
+    def _refresh_banner(self, cfg: AppConfig) -> None:
+        """Show the welcome banner only while the config is incomplete."""
+        has_creds = (
+            (cfg.confluence.auth_mode == "api_token"
+                and cfg.confluence.email and cfg.confluence.api_token)
+            or (cfg.confluence.auth_mode == "pat"
+                and cfg.confluence.personal_access_token)
+            or (cfg.confluence.auth_mode == "browser_cookie"
+                and cfg.confluence.cookies)
+        )
+        complete = bool(
+            cfg.confluence.base_url and cfg.confluence.space_key and has_creds
+        )
+        if complete:
+            # Collapse the banner: blank label, no padding
+            self._banner_label.config(text="")
+            self._banner.config(padx=0, pady=0)
+        else:
+            self._banner_label.config(
+                text=(
+                    "👋 Welcome! Fill in the fields below, hit "
+                    "“Test connection”, then “Save to config”. "
+                    "After that the Export tab is ready to go."
+                ),
+            )
+            self._banner.config(padx=12, pady=8)
 
     def write_into(self, cfg: AppConfig) -> None:
         cfg.confluence.base_url = self.base_url.get().strip().rstrip("/")
@@ -488,8 +684,12 @@ class ExportTab(_BaseTab):
 
         btns = ttk.Frame(self)
         btns.pack(pady=(18, 0))
-        ttk.Button(btns, text="🔍  Check status", command=self._on_status).pack(side=tk.LEFT)
-        ttk.Button(btns, text="▶  Run export", command=self._on_run).pack(side=tk.LEFT, padx=(8, 0))
+        status_btn = ttk.Button(btns, text="🔍  Check status", command=self._on_status)
+        status_btn.pack(side=tk.LEFT)
+        run_btn = ttk.Button(btns, text="▶  Run export", command=self._on_run)
+        run_btn.pack(side=tk.LEFT, padx=(8, 0))
+        self.app.register_action_button(status_btn)
+        self.app.register_action_button(run_btn)
 
         ttk.Label(
             self,
@@ -530,7 +730,11 @@ class ExportTab(_BaseTab):
             def cb(title: str, i: int, total: int) -> None:
                 self.app._uiq.progress(i, total, title[:70])
 
-            exporter = SpaceExporter(self.app.cfg, client, progress=cb)
+            exporter = SpaceExporter(
+                self.app.cfg, client,
+                progress=cb,
+                cancel_event=self.app.cancel_event,
+            )
             result = exporter.run()
             self.app._uiq.log(
                 f"Export done — new: {result.new_count}, updated: {result.updated_count}, "
@@ -606,7 +810,9 @@ class ConvertTab(_BaseTab):
             variable=self.merge_pdf,
         ).grid(row=3, column=1, sticky="w", padx=8, pady=(8, 0))
 
-        ttk.Button(self, text="▶  Run convert", command=self._on_run).pack(pady=(18, 0))
+        run_btn = ttk.Button(self, text="▶  Run convert", command=self._on_run)
+        run_btn.pack(pady=(18, 0))
+        self.app.register_action_button(run_btn)
 
     def refresh_from(self, cfg: AppConfig) -> None:
         self.src.delete(0, tk.END)
@@ -631,6 +837,7 @@ class ConvertTab(_BaseTab):
                 target_format=fmt,
                 engine=engine,
                 merge_pdf_attachments=merge_flag,
+                cancel_event=self.app.cancel_event,
             )
 
             def cb(name: str, i: int, total: int) -> None:
@@ -687,7 +894,9 @@ class MergeTab(_BaseTab):
             values=["auto", *engine_names()], state="readonly", width=14,
         ).grid(row=3, column=1, sticky="w", padx=8)
 
-        ttk.Button(self, text="▶  Run merge", command=self._on_run).pack(pady=(18, 0))
+        run_btn = ttk.Button(self, text="▶  Run merge", command=self._on_run)
+        run_btn.pack(pady=(18, 0))
+        self.app.register_action_button(run_btn)
 
     def refresh_from(self, cfg: AppConfig) -> None:
         self.src.delete(0, tk.END)
@@ -710,7 +919,10 @@ class MergeTab(_BaseTab):
         engine = self.engine.get()
 
         def target() -> None:
-            merger = PDFMerger(source_root=src, dest_root=dst, mode=mode, engine=engine)
+            merger = PDFMerger(
+                source_root=src, dest_root=dst, mode=mode, engine=engine,
+                cancel_event=self.app.cancel_event,
+            )
             ok_n, fail_n = merger.run()
             self.app._uiq.log(f"Merge done — volumes: {ok_n}, failed: {fail_n}. Output: {dst}")
 

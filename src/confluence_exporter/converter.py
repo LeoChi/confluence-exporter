@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -105,6 +106,7 @@ class OutputConverter:
         engine: str = "auto",
         merge_pdf_attachments: bool = True,
         progress: ProgressCallback = None,
+        cancel_event: threading.Event | None = None,
     ):
         self.output_root = Path(output_root)
         self.target_format = target_format
@@ -115,6 +117,10 @@ class OutputConverter:
         self.engine = engine
         self.merge_pdf_attachments = merge_pdf_attachments
         self._progress = progress
+        self._cancel_event = cancel_event
+
+    def _is_cancelled(self) -> bool:
+        return bool(self._cancel_event and self._cancel_event.is_set())
 
         self._attachments_by_title: dict[str, Path] = {}
         self._attachments_by_pageid: dict[str, Path] = {}
@@ -242,6 +248,12 @@ class OutputConverter:
 
         try:
             for i, html_path in enumerate(html_files, 1):
+                if self._is_cancelled():
+                    logger.warning(
+                        "Convert cancelled by user after %d/%d file(s).",
+                        i - 1, total,
+                    )
+                    break
                 if self._progress:
                     self._progress(html_path.name, i, total)
                 try:
