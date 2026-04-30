@@ -22,6 +22,38 @@ def html_escape(s: str) -> str:
     return html.escape(s or "", quote=True)
 
 
+def _append_html(parent, body_html: str | None) -> None:
+    """Safely append parsed HTML into ``parent``.
+
+    Works around a long-standing bs4 quirk: ``parent.append(BeautifulSoup(...))``
+    raises ``IndexError`` when the parsed soup has no contents, because bs4's
+    ``Tag.append`` ends with ``self.insert(...)[0]``. Confluence pages with
+    empty ``{code}`` macros / empty info panels trigger this in the wild.
+
+    Behaviour:
+
+    * Empty / whitespace-only input → no-op.
+    * Strips the ``<html><body>`` wrapper that lxml inserts.
+    * Falls back to a plain text node if parsing fails for any reason.
+    """
+    if not body_html or not body_html.strip():
+        return
+    try:
+        fragment = BeautifulSoup(body_html, "lxml")
+    except Exception:
+        parent.append(body_html)
+        return
+
+    container = fragment.body or fragment
+    children = list(container.children)
+    if not children:
+        # Could happen if body_html was just markup that lxml dropped
+        # (e.g. only comments or whitespace inside tags).
+        return
+    for child in children:
+        parent.append(child)
+
+
 def clean_confluence_html(html_str: str, attachment_map: dict[str, str]) -> str:
     """Return a clean HTML fragment (body contents only).
 
@@ -73,7 +105,7 @@ def clean_confluence_html(html_str: str, attachment_map: dict[str, str]) -> str:
             li = soup.new_tag("li")
             mark = "[x] " if status.strip().lower() == "complete" else "[ ] "
             li.append(mark)
-            li.append(BeautifulSoup(body_text, "lxml"))
+            _append_html(li, body_text)
             ul.append(li)
         tl.replace_with(ul)
 
@@ -89,7 +121,7 @@ def clean_confluence_html(html_str: str, attachment_map: dict[str, str]) -> str:
         if name in ("code", "noformat"):
             pre = soup.new_tag("pre")
             code = soup.new_tag("code")
-            code.append(BeautifulSoup(body_html or "", "lxml"))
+            _append_html(code, body_html)
             pre.append(code)
             macro.replace_with(pre)
         elif name in ("info", "note", "warning", "tip"):
@@ -105,11 +137,11 @@ def clean_confluence_html(html_str: str, attachment_map: dict[str, str]) -> str:
                     ),
                 },
             )
-            div.append(BeautifulSoup(body_html or "", "lxml"))
+            _append_html(div, body_html)
             macro.replace_with(div)
         elif name in ("panel", "expand", "details"):
             div = soup.new_tag("div", attrs={"class": f"conf-{name}"})
-            div.append(BeautifulSoup(body_html or "", "lxml"))
+            _append_html(div, body_html)
             macro.replace_with(div)
         else:
             # Unknown macro — unwrap to preserve content at least
