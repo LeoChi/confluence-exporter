@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urljoin  # used by _url() for API paths
 
 import requests
 
@@ -37,7 +37,12 @@ class ConfluenceClient:
         if not base_url:
             raise ValueError("base_url is required")
         self.base_url = base_url.rstrip("/")
-        self.api_root = self.base_url + "/wiki/rest/api/"
+        # On Atlassian Cloud all wiki endpoints (and attachment downloads)
+        # live under the ``/wiki`` context. On Server the context is empty,
+        # but the base_url usually already includes whatever prefix is
+        # required, so the simplest robust default is "/wiki" for Cloud.
+        self.wiki_context = "/wiki"
+        self.api_root = self.base_url + self.wiki_context + "/rest/api/"
         self.request_delay = max(0.0, request_delay_seconds)
         self.timeout = timeout
 
@@ -170,9 +175,27 @@ class ConfluenceClient:
                 break
         return attachments
 
+    def _attachment_url(self, download_path: str) -> str:
+        """Resolve an ``_links.download`` value into an absolute URL.
+
+        Confluence's REST response gives this path *relative to the wiki
+        context*, e.g. ``/download/attachments/12345/foo.png``. On Atlassian
+        Cloud the wiki context is ``/wiki``, so we have to prepend it —
+        otherwise the request lands on the bare host and 404s.
+        """
+        # Already absolute — use as-is.
+        if download_path.startswith(("http://", "https://")):
+            return download_path
+
+        path = "/" + download_path.lstrip("/")
+        # Don't double-prefix if the API already returned ``/wiki/...``
+        if self.wiki_context and not path.startswith(self.wiki_context + "/"):
+            path = self.wiki_context + path
+        return self.base_url + path
+
     def download_attachment(self, download_path: str) -> bytes:
         """Download an attachment by its ``_links.download`` path."""
-        url = urljoin(self.base_url + "/", download_path.lstrip("/"))
+        url = self._attachment_url(download_path)
         if self.request_delay:
             time.sleep(self.request_delay)
         resp = self._session.get(url, timeout=self.timeout)
