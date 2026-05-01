@@ -119,12 +119,12 @@ class OutputConverter:
         self._progress = progress
         self._cancel_event = cancel_event
 
-    def _is_cancelled(self) -> bool:
-        return bool(self._cancel_event and self._cancel_event.is_set())
-
         self._attachments_by_title: dict[str, Path] = {}
         self._attachments_by_pageid: dict[str, Path] = {}
         self._scan_attachment_dirs()
+
+    def _is_cancelled(self) -> bool:
+        return bool(self._cancel_event and self._cancel_event.is_set())
 
     # ------------------------------------------------------------------
     def _scan_attachment_dirs(self) -> None:
