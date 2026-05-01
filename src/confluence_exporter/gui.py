@@ -145,12 +145,17 @@ class App(tk.Tk):
         except Exception:
             self._cfg = AppConfig()
 
-        # Install the log handler so the library's logger streams into our UI
-        root_logger = logging.getLogger("confluence_exporter")
-        root_logger.setLevel(logging.INFO)
-        root_logger.addHandler(_QueueLogHandler(self._uiq))
-        # Also forward root logger
-        logging.getLogger().addHandler(_QueueLogHandler(self._uiq))
+        # Install the log handler so the library's logger streams into our UI.
+        # We attach to the package logger and disable propagation, otherwise
+        # records bubble up to the root logger and any handler installed there
+        # would log every line a second time. (Library code never logs through
+        # the root logger, so we don't lose anything by not attaching to it.)
+        cfx_logger = logging.getLogger("confluence_exporter")
+        cfx_logger.setLevel(logging.INFO)
+        cfx_logger.propagate = False
+        # Don't double-attach if the App is reconstructed (e.g. in tests)
+        if not any(isinstance(h, _QueueLogHandler) for h in cfx_logger.handlers):
+            cfx_logger.addHandler(_QueueLogHandler(self._uiq))
 
         self._build_ui()
         # Poll the queue at 20 Hz for log/progress updates
