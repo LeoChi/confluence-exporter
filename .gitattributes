@@ -1,0 +1,26 @@
+# Normalize line endings: store text files with LF in the repository,
+# regardless of the OS the file was authored on. This prevents the whole-file
+# CRLF/LF diffs that appear when editing on Windows.
+* text=auto eol=lf
+
+# Source & text formats — always LF
+*.py     text eol=lf
+*.toml   text eol=lf
+*.cfg    text eol=lf
+*.ini    text eol=lf
+*.md     text eol=lf
+*.txt    text eol=lf
+*.json   text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.html   text eol=lf
+*.css    text eol=lf
+
+# Binary assets — never touched by EOL normalization
+*.pdf    binary
+*.docx   binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
